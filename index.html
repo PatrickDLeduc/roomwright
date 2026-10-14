@@ -1245,7 +1245,8 @@ function bind3D(){
     if(h&&h.t==='ihandle'){ const it=findSel(), top=Math.max(it.h,.02)+.02, p=planePoint(x,y,top);
       if(p){ d3={mode:'isize',st:beginItemResize(it,h.hx,h.hy,p[0],p[1]),top,moved:false}; return; } }
     if(h&&h.t==='item'){ const it=S.items.find(i=>i.id===h.id); if(!S.sel||S.sel.id!==it.id) select('item',it.id); d3={mode:'item',it,ox:fp?fp[0]-it.x:0,oy:fp?fp[1]-it.y:0,x,y,moved:false}; return; }
-    if(h&&h.t==='open'){ const o=S.opens.find(i=>i.id===h.id); if(!S.sel||S.sel.id!==o.id) select('open',o.id); d3={mode:'open',o,x,y,moved:false}; return; }
+    /* doors & windows only drag once selected; an unselected one is just a click target, so orbiting across it never moves it */
+    if(h&&h.t==='open'&&S.sel&&S.sel.id===h.id){ const o=S.opens.find(i=>i.id===h.id); d3={mode:'open',o,x,y,moved:false}; return; }
     if(h&&h.t==='room'&&S.sel&&S.sel.id===h.id&&fp){ const r=findSel(); d3=Object.assign({mode:'room',r,ox:fp[0]-r.x,oy:fp[1]-r.y,x,y,moved:false},roomContents(r)); return; }
     d3={mode:'orbit',x,y,th:X.goal.th,ph:X.goal.ph,moved:false,hit:h};
   });
@@ -1259,7 +1260,7 @@ function bind3D(){
       case 'orbit': if(far) d3.moved=true; if(!d3.moved) return; g.th=d3.th-dx*.008; g.ph=Math.max(.1,Math.min(1.48,d3.ph-dy*.008)); el.style.cursor='grabbing'; break;
       case 'pan': { const kk=g.r*.0016; g.tx=d3.tx-Math.cos(g.th)*dx*kk-Math.sin(g.th)*dy*kk; g.tz=d3.tz+Math.sin(g.th)*dx*kk-Math.cos(g.th)*dy*kk; el.style.cursor='grabbing'; X.need=true; break; }
       case 'item': if(!d3.moved){ if(!far) return; d3.moved=true; startCarry(d3.it,'drag',{ox:d3.ox,oy:d3.oy}); el.style.cursor='grabbing'; } moveCarry(e); break;
-      case 'open': { if(!d3.moved&&!far) return; d3.moved=true; const fp=floorPoint(e.clientX,e.clientY); if(fp){ placeOpening(d3.o,fp[0],fp[1],e.altKey); liveChanged(); } break; }
+      case 'open': { if(!d3.moved&&Math.hypot(dx,dy)<=10) return; d3.moved=true; const fp=floorPoint(e.clientX,e.clientY); if(fp){ placeOpening(d3.o,fp[0],fp[1],e.altKey); liveChanged(); } break; }
       case 'room': { if(!d3.moved&&!far) return; d3.moved=true; const fp=floorPoint(e.clientX,e.clientY); if(!fp) return; const r=d3.r;
         r.x=fp[0]-d3.ox; r.y=fp[1]-d3.oy; snapRoom(r,1/60,e.altKey); d3.kids.forEach(k=>{k.i.x=r.x+k.dx;k.i.y=r.y+k.dy;}); d3.ops.forEach(k=>{k.o.x=r.x+k.dx;k.o.y=r.y+k.dy;}); liveChanged(); break; }
       case 'edge': { const fp=floorPoint(e.clientX,e.clientY); if(!fp) return; d3.moved=true; edgeResize(d3.r,d3.side,fp[0],fp[1],1/60,e.altKey); liveChanged(); break; }
@@ -1272,7 +1273,7 @@ function bind3D(){
     if(d.mode==='heldTouch'){ if(e.type==='pointerup') dropCarry(); return; }
     if(d.mode==='item'){ if(d.moved) dropCarry(); return; }
     if(d.mode==='open'||d.mode==='room'||d.mode==='edge'||d.mode==='isize'){ if(d.moved) commit(); return; }
-    if(d.mode==='orbit'&&!d.moved){ if(d.hit&&d.hit.t==='room') select('room',d.hit.id); else select(null); }
+    if(d.mode==='orbit'&&!d.moved){ if(d.hit&&d.hit.t==='room') select('room',d.hit.id); else if(d.hit&&d.hit.t==='open') select('open',d.hit.id); else select(null); }
   };
   el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up);
   el.addEventListener('pointerleave',()=>{ if(!d3) setHover(null); });
