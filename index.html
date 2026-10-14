@@ -148,6 +148,15 @@ button:focus-visible,input:focus-visible,select:focus-visible,.tile:focus-visibl
 .sw button[aria-pressed="true"]{box-shadow:0 0 0 2px var(--select)}
 .sw input[type=color]{width:28px;height:28px;border:1px solid var(--line);border-radius:6px;background:transparent;padding:1px;cursor:pointer}
 .floors{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.sw-lab{display:block;font-size:11px;color:var(--muted);margin:9px 0 5px}
+.hexrow{display:flex;gap:6px;align-items:center;margin-top:9px}
+.hexrow .hex{flex:1;min-width:88px;text-transform:uppercase;letter-spacing:.03em}
+.hexrow .hex.bad{border-color:var(--danger);background:var(--danger-soft)}
+.hexrow .btn{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;white-space:nowrap}
+.hexrow .abar-sw{width:14px;height:14px;flex:none}
+.hexrow .btn:disabled{opacity:.45;cursor:default}
+.abar-pop .hexrow{min-width:250px}
+.hexrow .ib{flex:none}
 .floors button{border:1px solid var(--line);background:var(--panel-2);border-radius:7px;padding:4px;cursor:pointer;display:grid;gap:3px;font-size:10.5px;color:var(--muted)}
 .floors button[aria-pressed="true"]{border-color:var(--select);color:var(--ink);box-shadow:0 0 0 1px var(--select)}
 .floors canvas{width:100%;aspect-ratio:1;border-radius:4px;display:block}
@@ -336,6 +345,52 @@ const CATS = [
   {n:'Bathroom', items:['toilet','tub','vanity','shower']},
   {n:'Doors & windows', opens:['door','door2','window','window2']},
 ];
+const CC=document.createElement('canvas').getContext('2d');
+/* Accepts anything CSS understands: #abc, #aabbcc, aabbcc, rgb(…), hsl(…), names like "teal". Returns #rrggbb or null. */
+function parseColor(v){
+  if(v==null) return null; let t=String(v).trim().replace(/^['"`]|['"`;]+$/g,'').trim();
+  if(!t||t.length>64) return null;
+  if(/^[0-9a-f]{3}$|^[0-9a-f]{6}$/i.test(t)) t='#'+t;
+  CC.fillStyle='#010203'; CC.fillStyle=t; const a=CC.fillStyle;
+  if(a==='#010203' && !/^#?010203$/i.test(t)) return null;
+  if(a[0]==='#') return a.toLowerCase();
+  const m=a.match(/[\d.]+/g); return m?'#'+m.slice(0,3).map(x=>Math.round(+x).toString(16).padStart(2,'0')).join(''):null;
+}
+let CLIP=null; try{ CLIP=parseColor(localStorage.getItem('rw-colour-clip')); }catch(e){}
+function setClip(c){ CLIP=c; try{ localStorage.setItem('rw-colour-clip',c); }catch(e){}
+  document.querySelectorAll('[data-clip-sw]').forEach(el=>el.style.background=c);
+  document.querySelectorAll('[data-cc="paste"]').forEach(b=>{ b.disabled=false; b.title=`Paste ${c.toUpperCase()} (Ctrl+V)`; }); }
+function copyColor(c,viaEvent){ c=c.toLowerCase(); setClip(c);
+  if(!viaEvent){ try{ navigator.clipboard.writeText(c.toUpperCase()).catch(()=>{}); }catch(e){} }
+  toast(`Copied ${c.toUpperCase()} · select another piece and press Ctrl+V`); }
+function applyColor(o,c,how){ if(!o||!S.sel||S.sel.t!=='item') return false; o.c=c; commit(); toast(`${how||'Pasted'} ${c.toUpperCase()} on ${nameOf(o)}`); return true; }
+async function pasteColor(){ const o=findSel(); if(!o||S.sel.t!=='item') return;
+  let c=null; try{ c=parseColor(await navigator.clipboard.readText()); }catch(e){}
+  c=c||CLIP; if(!c){ toast('Nothing to paste yet: copy a colour first'); return; } applyColor(o,c); }
+async function pickFromScreen(){ const o=findSel(); if(!o||!window.EyeDropper) return;
+  try{ const r=await new EyeDropper().open(); const c=parseColor(r.sRGBHex); if(c){ setClip(c); applyColor(o,c,'Picked'); } }
+  catch(e){ if(e&&e.name!=='AbortError') toast('The eyedropper is blocked here. Paste a hex code instead.'); } }
+function projColors(){ return [...new Set(S.items.map(i=>String(i.c).toLowerCase()))].filter(c=>!SWATCH.includes(c)).slice(0,14); }
+const IC_COPY='<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+const IC_DROP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14.5 6.5 3 3"/><path d="M16 3.5a2.1 2.1 0 0 1 3 3l-2 2-3-3 2-2z"/><path d="m14 8-9 9-1 3 3-1 9-9"/></svg>';
+function finishUI(o,colorId){ const cur=String(o.c).toLowerCase(), pc=projColors();
+  const sw=c=>`<button type="button" data-c="${c}" aria-label="Colour ${c.toUpperCase()}" title="${c.toUpperCase()}" aria-pressed="${cur===c}" style="background:${c}"></button>`;
+  return `<div class="sw">${SWATCH.map(sw).join('')}<input type="color" id="${colorId}" value="${esc(cur)}" aria-label="Custom colour"></div>
+    ${pc.length?`<span class="sw-lab">In this project</span><div class="sw">${pc.map(sw).join('')}</div>`:''}
+    <div class="hexrow"><input class="inp hex" data-hex value="${esc(cur.toUpperCase())}" aria-label="Colour code" title="Type or paste a colour: #A1B2C3, rgb(…), or a name" spellcheck="false" autocomplete="off">
+      <button type="button" class="ib" data-cc="copy" title="Copy this colour (Ctrl+C)" aria-label="Copy this colour">${IC_COPY}</button>
+      <button type="button" class="btn" data-cc="paste" ${CLIP?`title="Paste ${CLIP.toUpperCase()} (Ctrl+V)"`:'title="Paste a copied colour (Ctrl+V)"'}><span class="abar-sw" data-clip-sw style="background:${CLIP||'transparent'}"></span>Paste</button>
+      ${window.EyeDropper?`<button type="button" class="ib" data-cc="drop" title="Pick a colour from anywhere on screen" aria-label="Pick a colour from the screen">${IC_DROP}</button>`:''}</div>`; }
+function bindFinish(root,o){
+  const hx=root.querySelector('[data-hex]');
+  if(hx){ const take=v=>{ const c=parseColor(v); if(!c){ hx.classList.add('bad'); toast('That isn\'t a colour I recognise. Try #A1B2C3.'); return; } hx.classList.remove('bad'); if(c!==String(o.c).toLowerCase()) applyColor(o,c,'Set'); };
+    hx.onchange=()=>take(hx.value);
+    hx.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); take(hx.value); } };
+    hx.onfocus=()=>hx.select();
+    hx.onpaste=e=>{ const t=e.clipboardData&&e.clipboardData.getData('text/plain'); const c=parseColor(t); if(c){ e.preventDefault(); hx.value=c.toUpperCase(); take(c); } }; }
+  root.querySelectorAll('[data-cc]').forEach(b=>b.onclick=e=>{ e.stopPropagation(); const a=b.dataset.cc;
+    if(a==='copy') copyColor(String(o.c)); else if(a==='paste') pasteColor(); else pickFromScreen(); });
+}
 const SWATCH = ['#7c8f99','#9b5b44','#5f6b52','#b9a58c','#d9d4c7','#3c3f45','#b08455','#6d4a35','#e8e6e1','#c39a2b'];
 
 /* ---------------- state ---------------- */
@@ -1323,7 +1378,7 @@ function togglePop(kind){
   const pop=$('#abarPop'), o=findSel(); if(!o) return;
   if(!pop.hidden&&pop.dataset.k===kind){ closeAbarPop(); return; }
   pop.dataset.k=kind;
-  if(kind==='color') pop.innerHTML=`<div class="sw">${SWATCH.map(c=>`<button type="button" data-c="${c}" aria-label="Colour ${c}" aria-pressed="${o.c.toLowerCase()===c}" style="background:${c}"></button>`).join('')}<input type="color" id="abarColor" value="${esc(o.c)}" aria-label="Custom colour"></div>`;
+  if(kind==='color'){ pop.innerHTML=finishUI(o,'abarColor'); bindFinish(pop,o); }
   else pop.innerHTML=`<div class="floors">${Object.keys(FLOORS).map(k=>`<button type="button" data-f="${k}" aria-pressed="${o.f===k}"><canvas width="80" height="80" data-floor="${k}"></canvas>${FLOORS[k].n}</button>`).join('')}</div>`;
   pop.querySelectorAll('canvas[data-floor]').forEach(paintFloorThumb);
   const ci=pop.querySelector('#abarColor'); if(ci){ ci.oninput=()=>{ o.c=ci.value; req3D(); req2D(); }; ci.onchange=()=>{ o.c=ci.value; commit(); }; }
@@ -1429,7 +1484,7 @@ function renderInspector(){
       <div class="stat"><span>Doors & windows</span><span>${S.opens.length}</span></div>
       ${S.rooms.length?'<h3 class="eyebrow">Rooms</h3>':''}<ul class="rlist">${S.rooms.map(r=>`<li><button type="button" data-room="${r.id}"><canvas width="44" height="44" data-floor="${r.f}"></canvas><span class="rn">${esc(r.n)}</span><span class="ra">${esc(fmtLen(r.w))} × ${esc(fmtLen(r.d))}</span></button></li>`).join('')}</ul>
       <h3 class="eyebrow">Shortcuts</h3>
-      <dl class="keys"><dt>W A S D</dt><dd>Pan the 3D camera</dd><dt>Q / E</dt><dd>Rotate the view 45°</dd><dt>+ / −</dt><dd>Zoom</dd><dt>Dbl-click</dt><dd>Pick up a piece; click to place it</dd><dt>M</dt><dd>Pick up the selected piece</dd><dt>, / .</dt><dd>Rotate 45° (also mouse wheel while holding)</dd><dt>R</dt><dd>Rotate 90°</dd><dt>F</dt><dd>Focus the camera on the selection</dd><dt>Esc</dt><dd>Put back / deselect</dd><dt>Del</dt><dd>Remove selection</dd><dt>Ctrl D</dt><dd>Duplicate</dd><dt>Ctrl Z</dt><dd>Undo</dd><dt>Arrows</dt><dd>Nudge selection (Shift for larger steps)</dd><dt>Alt drag</dt><dd>Move without snapping</dd><dt>G</dt><dd>Toggle grid</dd></dl>`;
+      <dl class="keys"><dt>W A S D</dt><dd>Pan the 3D camera</dd><dt>Q / E</dt><dd>Rotate the view 45°</dd><dt>+ / −</dt><dd>Zoom</dd><dt>Dbl-click</dt><dd>Pick up a piece; click to place it</dd><dt>M</dt><dd>Pick up the selected piece</dd><dt>Ctrl+C / V</dt><dd>Copy a piece's colour, paste it onto another</dd><dt>, / .</dt><dd>Rotate 45° (also mouse wheel while holding)</dd><dt>R</dt><dd>Rotate 90°</dd><dt>F</dt><dd>Focus the camera on the selection</dd><dt>Esc</dt><dd>Put back / deselect</dd><dt>Del</dt><dd>Remove selection</dd><dt>Ctrl D</dt><dd>Duplicate</dd><dt>Ctrl Z</dt><dd>Undo</dd><dt>Arrows</dt><dd>Nudge selection (Shift for larger steps)</dd><dt>Alt drag</dt><dd>Move without snapping</dd><dt>G</dt><dd>Toggle grid</dd></dl>`;
   } else if(S.sel.t==='room'){
     h=`${close}<span class="eyebrow">Room</span><h2>${esc(o.n)}</h2>
       <label class="fld"><span>Name</span><input class="inp" id="iName" value="${esc(o.n)}"></label>
@@ -1444,7 +1499,7 @@ function renderInspector(){
       <label class="fld"><span>Label</span><input class="inp" id="iName" value="${esc(nameOf(o))}"></label>
       <div class="dims">${numField('iW','Width',o.w)}${numField('iD','Depth',o.d)}${numField('iH','Height',o.h)}</div>
       <div class="fld" style="margin-top:12px"><span>Rotation</span><div class="rot"><input type="range" id="iRot" min="0" max="345" step="15" value="${Math.round(o.rot/15)*15%360}" aria-label="Rotation"><output id="iRotOut">${Math.round(o.rot)}°</output><button class="btn" type="button" id="iRot90">+90°</button></div></div>
-      <div class="fld"><span>Finish</span><div class="sw">${SWATCH.map(c=>`<button type="button" data-c="${c}" aria-label="Color ${c}" aria-pressed="${o.c.toLowerCase()===c}" style="background:${c}"></button>`).join('')}<input type="color" id="iColor" value="${o.c}" aria-label="Custom color"></div></div>
+      <div class="fld"><span>Colour</span>${finishUI(o,'iColor')}</div>
       <div class="actions"><button class="btn" type="button" id="iDup">Duplicate</button><button class="btn danger" type="button" id="iDel">Delete</button></div>`;
   } else {
     h=`${close}<span class="eyebrow">${o.k.startsWith('door')?'Door':'Window'}</span><h2>${esc(OPENS[o.k].n)}</h2>
@@ -1472,7 +1527,7 @@ function bindInspector(o){
     const rot=q('#iRot'); rot.oninput=()=>{ o.rot=+rot.value; q('#iRotOut').textContent=o.rot+'°'; liveChanged(o.id); }; rot.onchange=()=>commit();
     q('#iRot90').onclick=()=>{ o.rot=(o.rot+90)%360; commit(); };
     insp.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ o.c=b.dataset.c; commit(); });
-    q('#iColor').onchange=e=>{ o.c=e.target.value; commit(); }; }
+    q('#iColor').onchange=e=>{ o.c=e.target.value; commit(); }; bindFinish(insp,o); }
   if(S.sel.t==='open'){ num('#iW',v=>{ o.w=Math.max(.4,v); placeOpening(o,o.x,o.y,true); }); q('#iType').onchange=e=>{ o.k=e.target.value; o.w=OPENS[o.k].w; placeOpening(o,o.x,o.y,true); commit(); };
     q('#iFlip')&&(q('#iFlip').onclick=()=>{ o.flip=!o.flip; commit(); }); }
 }
@@ -1620,6 +1675,11 @@ window.addEventListener('keydown',e=>{
   const st=(e.shiftKey?4:1)*itemStep(), dmap={ArrowLeft:[-st,0],ArrowRight:[st,0],ArrowUp:[0,-st],ArrowDown:[0,st]};
   if(dmap[e.key]){ e.preventDefault(); o.x+=dmap[e.key][0]; o.y+=dmap[e.key][1]; if(S.sel.t==='open') placeOpening(o,o.x,o.y,true); commit(); }
 });
+const isField=el=>el&&(el.tagName==='INPUT'||el.tagName==='SELECT'||el.tagName==='TEXTAREA'||el.isContentEditable);
+document.addEventListener('copy',e=>{ if(isField(document.activeElement)) return; const ws=window.getSelection(); if(ws&&String(ws).length) return;
+  const o=findSel(); if(!o||S.sel.t!=='item'||X.carry) return; e.preventDefault(); e.clipboardData.setData('text/plain',String(o.c).toUpperCase()); copyColor(String(o.c),true); });
+document.addEventListener('paste',e=>{ if(isField(document.activeElement)) return; const o=findSel(); if(!o||S.sel.t!=='item'||X.carry) return;
+  const c=parseColor(e.clipboardData&&e.clipboardData.getData('text/plain'))||CLIP; if(!c) return; e.preventDefault(); applyColor(o,c); });
 window.addEventListener('keyup',e=>{ const k=e.key.toLowerCase(); X.keys.delete(KEYMAP[k]||k); });
 window.addEventListener('blur',()=>X.keys.clear());
 
