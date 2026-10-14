@@ -113,6 +113,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,.tile:focus-visibl
 .zoom{position:absolute;right:12px;bottom:12px;display:flex;gap:4px}
 .zoom button{border:1px solid var(--line);background:var(--label-bg);border-radius:7px;min-width:32px;height:30px;padding:0 9px;cursor:pointer;font-weight:600;font-size:13px}
 .v-empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:13px;padding:24px;text-align:center}
+.blank-hint{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;padding:24px;z-index:2}
+.blank-hint div{max-width:300px;text-align:center;background:var(--label-bg);border:1px dashed var(--accent);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow)}
+.blank-hint strong{display:block;font-size:15px;margin-bottom:4px}
+.blank-hint p{margin:0;color:var(--muted);font-size:13px}
 
 .status{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;padding:7px 16px;border-top:1px solid var(--line);font:400 12px var(--f-mono);color:var(--muted);background:var(--panel);font-variant-numeric:tabular-nums}
 .status .hint{font-family:var(--f-ui);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -208,6 +212,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,.tile:focus-visibl
     <button class="ib" type="button" id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
     <button class="ib" type="button" id="btnRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
     <div class="menu-wrap">
+      <button class="btn" type="button" id="btnNew" aria-haspopup="true" aria-expanded="false">New</button>
+      <div class="menu" id="menuNew" hidden>
+        <button type="button" data-new="blank">Blank project<small>Empty canvas — start from scratch</small></button>
+        <button type="button" data-new="sample">Sample apartment<small>The furnished five-room demo</small></button>
+      </div>
+    </div>
+    <div class="menu-wrap">
       <button class="btn primary" type="button" id="btnExport" aria-haspopup="true" aria-expanded="false">Export</button>
       <div class="menu" id="menuExport" hidden>
         <button type="button" data-x="plan">Plan drawing<small>PNG, framed to your rooms</small></button>
@@ -227,11 +238,13 @@ button:focus-visible,input:focus-visible,select:focus-visible,.tile:focus-visibl
       <div class="views">
         <section class="view v2d" id="v2d" aria-label="Floor plan">
           <canvas id="plan"></canvas>
+          <div class="blank-hint" hidden><div><strong>Blank project</strong><p class="bh-text"></p></div></div>
           <div class="v-tag"><span class="chip" id="gridChip"></span></div>
           <div class="zoom"><button type="button" id="zOut" aria-label="Zoom out">−</button><button type="button" id="zIn" aria-label="Zoom in">+</button><button type="button" id="zFit">Fit</button></div>
         </section>
         <section class="view v3d" id="v3d" aria-label="3D model">
           <div id="three"></div>
+          <div class="blank-hint" hidden><div><strong>Blank project</strong><p class="bh-text"></p></div></div>
           <div class="mini" id="miniWrap" hidden><canvas id="mini" aria-label="Mini floor plan. Click to move the camera there."></canvas><span class="mini-tag">Plan</span></div>
           <div class="abar" id="abar" hidden><div class="abar-pop" id="abarPop" hidden></div><div class="abar-dim" id="abarDim"></div><div class="abar-row" id="abarRow" role="toolbar" aria-label="Selection actions"></div></div>
           <div class="v-tag"><span class="chip">WASD pan · Q E rotate · scroll zoom · double-click to pick up</span></div>
@@ -521,7 +534,10 @@ function commit(){ const s=snapshot(); if(s===lastSnap) return changed(); hist.p
 function restore(s){ const o=JSON.parse(s); S.rooms=o.r; S.items=o.i; S.opens=o.o; if(S.sel && !findSel()) S.sel=null; changed(); }
 function undo(){ if(X.carry) cancelCarry(); if(!hist.length) return; fut.push(lastSnap); lastSnap=hist.pop(); restore(lastSnap); toast('Undone'); }
 function redo(){ if(X.carry) cancelCarry(); if(!fut.length) return; hist.push(lastSnap); lastSnap=fut.pop(); restore(lastSnap); }
-function changed(){ computeCollisions(); req2D(); req3D(); renderInspector(); updateStatus(); $('#btnUndo').disabled=!hist.length; $('#btnRedo').disabled=!fut.length; }
+function blankHint(){ const empty=!S.rooms.length&&!S.items.length&&!S.opens.length;
+  const msg=window.matchMedia('(max-width: 860px)').matches ? 'Tap + Add and pick a room to begin, then furnish it.' : 'Drag a room from the library on the left to begin, then add doors, windows and furniture.';
+  document.querySelectorAll('.blank-hint').forEach(h=>{ h.hidden=!empty; h.querySelector('.bh-text').textContent=msg; }); }
+function changed(){ blankHint(); computeCollisions(); req2D(); req3D(); renderInspector(); updateStatus(); $('#btnUndo').disabled=!hist.length; $('#btnRedo').disabled=!fut.length; }
 function liveChanged(){ computeCollisions(); req2D(); req3D(); updateStatus(); abarText(); }
 function findSel(){ const s=S.sel; if(!s) return null; const arr=s.t==='room'?S.rooms:s.t==='item'?S.items:S.opens; return arr.find(x=>x.id===s.id)||null; }
 
@@ -1351,12 +1367,12 @@ function renderInspector(){
   const close='<button class="btn only-narrow insp-close" type="button" id="iClose">Done</button>';
   if(!o){
     const total=S.rooms.reduce((a,r)=>a+r.w*r.d,0);
-    h=`<span class="eyebrow">Project</span><h2>Apartment layout</h2>
+    h=`<span class="eyebrow">Project</span><h2>${S.rooms.length?'Apartment layout':'Blank project'}</h2>
       <div class="stat"><span>Floor area</span><span>${esc(fmtArea(total))}</span></div>
       <div class="stat"><span>Rooms</span><span>${S.rooms.length}</span></div>
       <div class="stat"><span>Furniture</span><span>${S.items.length}</span></div>
       <div class="stat"><span>Doors & windows</span><span>${S.opens.length}</span></div>
-      <h3 class="eyebrow">Rooms</h3><ul class="rlist">${S.rooms.map(r=>`<li><button type="button" data-room="${r.id}"><canvas width="44" height="44" data-floor="${r.f}"></canvas><span class="rn">${esc(r.n)}</span><span class="ra">${esc(fmtLen(r.w))} × ${esc(fmtLen(r.d))}</span></button></li>`).join('')}</ul>
+      ${S.rooms.length?'<h3 class="eyebrow">Rooms</h3>':''}<ul class="rlist">${S.rooms.map(r=>`<li><button type="button" data-room="${r.id}"><canvas width="44" height="44" data-floor="${r.f}"></canvas><span class="rn">${esc(r.n)}</span><span class="ra">${esc(fmtLen(r.w))} × ${esc(fmtLen(r.d))}</span></button></li>`).join('')}</ul>
       <h3 class="eyebrow">Shortcuts</h3>
       <dl class="keys"><dt>W A S D</dt><dd>Pan the 3D camera</dd><dt>Q / E</dt><dd>Rotate the view 45°</dd><dt>+ / −</dt><dd>Zoom</dd><dt>Dbl-click</dt><dd>Pick up a piece; click to place it</dd><dt>M</dt><dd>Pick up the selected piece</dd><dt>, / .</dt><dd>Rotate 45° (also mouse wheel while holding)</dd><dt>R</dt><dd>Rotate 90°</dd><dt>F</dt><dd>Focus the camera on the selection</dd><dt>Esc</dt><dd>Put back / deselect</dd><dt>Del</dt><dd>Remove selection</dd><dt>Ctrl D</dt><dd>Duplicate</dd><dt>Ctrl Z</dt><dd>Undo</dd><dt>Arrows</dt><dd>Nudge selection (Shift for larger steps)</dd><dt>Alt drag</dt><dd>Move without snapping</dd><dt>G</dt><dd>Toggle grid</dd></dl>`;
   } else if(S.sel.t==='room'){
@@ -1490,7 +1506,18 @@ async function doExport(kind){
 }
 $('#btnExport').onclick=e=>{ const m=$('#menuExport'); m.hidden=!m.hidden; e.currentTarget.setAttribute('aria-expanded',String(!m.hidden)); };
 $('#menuExport').addEventListener('click',e=>{ const b=e.target.closest('[data-x]'); if(b) doExport(b.dataset.x); });
-document.addEventListener('pointerdown',e=>{ if(!e.target.closest('.menu-wrap')) { $('#menuExport').hidden=true; $('#btnExport').setAttribute('aria-expanded','false'); } });
+function closeMenus(except){ [['#menuExport','#btnExport'],['#menuNew','#btnNew']].forEach(([m,b])=>{ if(m===except) return; $(m).hidden=true; $(b).setAttribute('aria-expanded','false'); }); }
+document.addEventListener('pointerdown',e=>{ if(!e.target.closest('.menu-wrap')) closeMenus(); });
+$('#btnNew').onclick=e=>{ closeMenus('#menuNew'); const m=$('#menuNew'); m.hidden=!m.hidden; e.currentTarget.setAttribute('aria-expanded',String(!m.hidden)); };
+$('#menuNew').addEventListener('click',e=>{ const b=e.target.closest('[data-new]'); if(b) newProject(b.dataset.new); });
+function newProject(kind){
+  closeMenus(); if(X.carry) cancelCarry(); closeAbarPop();
+  S.rooms=[]; S.items=[]; S.opens=[]; S.sel=null;
+  if(kind==='sample') sample();
+  commit(); syncSheets();
+  requestAnimationFrame(()=>{ fitPlan(); if(X.ok) resetCam(); });
+  toast(kind==='sample' ? 'Loaded the sample apartment. Ctrl+Z to undo.' : 'Started a blank project. Ctrl+Z brings the old one back.');
+}
 
 /* ---------------- toolbar & layout ---------------- */
 const isNarrow = () => window.matchMedia('(max-width: 860px)').matches;
@@ -1515,7 +1542,7 @@ const KEYMAP={arrowup:'w',arrowdown:'s',arrowleft:'a',arrowright:'d'};
 window.addEventListener('keydown',e=>{
   const tg=e.target; if(tg && (tg.tagName==='INPUT'||tg.tagName==='SELECT'||tg.tagName==='TEXTAREA')) return;
   const mod=e.ctrlKey||e.metaKey, o=findSel(), k=e.key.toLowerCase(), in3d=X.ok && !$('#v3d').hidden;
-  if(e.key==='Escape'){ if(X.carry){ cancelCarry(); return; } closeAbarPop(); select(null); $('#menuExport').hidden=true; $('#modal').hidden=true; return; }
+  if(e.key==='Escape'){ if(X.carry){ cancelCarry(); return; } closeAbarPop(); select(null); closeMenus(); $('#modal').hidden=true; return; }
   if(mod){ if(X.carry) return;
     if(k==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
     if(k==='y'){ e.preventDefault(); redo(); return; }
