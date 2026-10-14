@@ -335,7 +335,7 @@ const KINDS = {
   vanity:{n:'Vanity',w:0.9,d:0.5,h:0.85,c:'#6d4a35'},
   shower:{n:'Shower',w:0.9,d:0.9,h:2.0,c:'#f2f1ee'},
 };
-const OPENS = { door:{n:'Door',w:0.9}, door2:{n:'Double door',w:1.5}, window:{n:'Window',w:1.2}, window2:{n:'Wide window',w:2.0} };
+const OPENS = { door:{n:'Door',w:0.9}, door2:{n:'Double door',w:1.5}, window:{n:'Window',w:1.2}, window2:{n:'Wide window',w:2.0}, gap:{n:'Open wall',w:2.5} };
 const CATS = [
   {n:'Rooms', rooms:ROOMS.map(r=>r.k)},
   {n:'Living room', items:['sofa','loveseat','armchair','coffee','side','tvstand','rug','shelf','lamp','plant']},
@@ -343,7 +343,7 @@ const CATS = [
   {n:'Kitchen', items:['counter','sink','range','fridge','island','stool']},
   {n:'Bedroom & office', items:['kbed','qbed','sbed','nightstand','dresser','wardrobe','desk','ochair']},
   {n:'Bathroom', items:['toilet','tub','vanity','shower']},
-  {n:'Doors & windows', opens:['door','door2','window','window2']},
+  {n:'Doors & windows', opens:['door','door2','window','window2','gap']},
 ];
 const CC=document.createElement('canvas').getContext('2d');
 /* Accepts anything CSS understands: #abc, #aabbcc, aabbcc, rgb(…), hsl(…), names like "teal". Returns #rrggbb or null. */
@@ -588,20 +588,27 @@ function resizeCursor(it,hx,hy){ // pick the CSS resize cursor that matches the 
 function roomContents(r){ return {
   kids:S.items.filter(i=>i.x>=r.x&&i.x<=r.x+r.w&&i.y>=r.y&&i.y<=r.y+r.d).map(i=>({i,dx:i.x-r.x,dy:i.y-r.y})),
   ops:S.opens.filter(o=>o.x>=r.x-.01&&o.x<=r.x+r.w+.01&&o.y>=r.y-.01&&o.y<=r.y+r.d+.01).map(o=>({o,dx:o.x-r.x,dy:o.y-r.y})) }; }
+/* extent of the room edge an opening sits on (so an open wall can span it end to end) */
+function wallSpan(o){ let best=null;
+  for(const r of S.rooms){
+    const edges=[['h',r.y,r.x,r.x+r.w],['h',r.y+r.d,r.x,r.x+r.w],['v',r.x,r.y,r.y+r.d],['v',r.x+r.w,r.y,r.y+r.d]];
+    for(const [ax,c,a0,a1] of edges){ if(ax!==o.ax) continue; const along=ax==='h'?o.x:o.y, line=ax==='h'?o.y:o.x;
+      if(Math.abs(line-c)<.06 && along>=a0-.01 && along<=a1+.01 && (!best||a1-a0>best.a1-best.a0)) best={a0,a1,c}; } }
+  return best; }
 function placeOpening(o, wx, wy, free){
-  let best=null, bd=Infinity; const hw=o.w/2;
+  let best=null, bd=Infinity; const hw=o.w/2, gp=o.k==='gap', mg=gp?0:.05;
   for(const r of S.rooms){
     const edges=[['h',r.y,r.x,r.x+r.w],['h',r.y+r.d,r.x,r.x+r.w],['v',r.x,r.y,r.y+r.d],['v',r.x+r.w,r.y,r.y+r.d]];
     for(const [ax,c,a0,a1] of edges){
-      if(a1-a0 < o.w+0.1) continue;
+      if(a1-a0 < (gp?o.w-1e-6:o.w+0.1)) continue;
       const along=ax==='h'?wx:wy, perp=ax==='h'?wy:wx;
-      let u=Math.max(a0+hw+0.05, Math.min(a1-hw-0.05, along));
+      let u=Math.max(a0+hw+mg, Math.min(a1-hw-mg, along));
       const d=Math.hypot(u-along, c-perp);
       if(d<bd){ bd=d; best={ax,c,u,a0,a1}; }
     }
   }
   if(best && bd<2){
-    let u=best.u; if(S.snap && !free) u=Math.max(best.a0+hw+0.05, Math.min(best.a1-hw-0.05, snapV(u,itemStep())));
+    let u=best.u; if(S.snap && !free) u=Math.max(best.a0+hw+mg, Math.min(best.a1-hw-mg, snapV(u,itemStep())));
     o.ax=best.ax; if(best.ax==='h'){ o.x=u; o.y=best.c; } else { o.x=best.c; o.y=u; }
   } else { o.x=wx; o.y=wy; }
 }
@@ -710,11 +717,13 @@ function drawOpening(g,o,v,selected){
   const a=o.ax==='h'?[1,0]:[0,1], n=o.ax==='h'?[0,1]:[1,0], s=o.flip?-1:1, hw=o.w/2;
   const Pt=(u,t)=>w2s(v,o.x+a[0]*u+n[0]*t, o.y+a[1]*u+n[1]*t);
   const poly=pts=>{ g.beginPath(); pts.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])); g.closePath(); };
-  g.fillStyle=T.paper; poly([Pt(-hw,-WT),Pt(hw,-WT),Pt(hw,WT),Pt(-hw,WT)]); g.fill();
+  g.fillStyle=T.paper; poly([Pt(-hw,-WT-.02),Pt(hw,-WT-.02),Pt(hw,WT+.02),Pt(-hw,WT+.02)]); g.fill();
   g.strokeStyle=T.wall; g.lineWidth=2;
   g.beginPath(); let p=Pt(-hw,-WT); g.moveTo(...p); p=Pt(-hw,WT); g.lineTo(...p); p=Pt(hw,-WT); g.moveTo(...p); p=Pt(hw,WT); g.lineTo(...p); g.stroke();
   const col = selected? T.sel : T.ink;
-  if(o.k==='door'||o.k==='door2'){
+  if(o.k==='gap'){
+    g.strokeStyle=selected?T.sel:T.muted; g.lineWidth=1; g.setLineDash([3,4]); g.beginPath(); g.moveTo(...Pt(-hw,0)); g.lineTo(...Pt(hw,0)); g.stroke(); g.setLineDash([]);
+  } else if(o.k==='door'||o.k==='door2'){
     const leaves = o.k==='door2'? [[-hw,hw,1],[hw,hw,-1]] : [[-hw,o.w,1]];
     for(const [hu,r,dir] of leaves){
       g.strokeStyle=col; g.lineWidth=2.2; g.beginPath(); g.moveTo(...Pt(hu,0)); g.lineTo(...Pt(hu,s*r)); g.stroke();
@@ -1100,7 +1109,7 @@ function wallPieces(r){
   for(const e of edges){
     const gaps=S.opens.filter(o=>o.ax===e.ax && Math.abs((e.ax==='h'?o.y:o.x)-e.line)<tol).map(o=>{ const u=e.ax==='h'?o.x:o.y; return {k:o.k,a:Math.max(e.a0,u-o.w/2),b:Math.min(e.a1,u+o.w/2)}; }).filter(q=>q.b>q.a).sort((p,q)=>p.a-q.a);
     let cur=e.a0;
-    for(const q of gaps){ if(q.a>cur) pieces.push({e,a:cur,b:q.a,type:'solid'}); pieces.push({e,a:Math.max(cur,q.a),b:q.b,type:q.k.startsWith('door')?'door':'window'}); cur=Math.max(cur,q.b); }
+    for(const q of gaps){ if(q.a>cur) pieces.push({e,a:cur,b:q.a,type:'solid'}); pieces.push({e,a:Math.max(cur,q.a),b:q.b,type:q.k==='gap'?'gap':q.k.startsWith('door')?'door':'window'}); cur=Math.max(cur,q.b); }
     if(cur<e.a1) pieces.push({e,a:cur,b:e.a1,type:'solid'});
   }
   pieces.forEach(p=>{ const m=(p.a+p.b)/2, off=.2, px=p.e.ax==='h'?m:p.e.line+p.e.n[0]*off, py=p.e.ax==='h'?p.e.line+p.e.n[1]*off:m;
@@ -1133,6 +1142,7 @@ function buildStructure(){
     me.castShadow=m!==glass; me.receiveShadow=true; me.userData={t:'wall'}; W.add(me); addW(me,y0,y1,e.n,p.shared); return me; };
   for(const r of S.rooms) for(const p of wallPieces(r)){
     if(p.type==='solid') seg(p,0,WALL_H);
+    else if(p.type==='gap'){ /* wall removed */ }
     else if(p.type==='door') seg(p,2.1,WALL_H);
     else { seg(p,0,.9); seg(p,2.1,WALL_H); const gm=seg(p,.9,2.1,glass); if(gm){ if(p.e.ax==='h') gm.scale.z=.02; else gm.scale.x=.02; } seg(p,.88,.92,frame); }
   }
@@ -1140,8 +1150,8 @@ function buildStructure(){
   const pm=X.pickM||(X.pickM=new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false,colorWrite:false}));
   const leafM=mat('#c9a77c');
   for(const o of S.opens){
-    const bx=new THREE.Mesh(X.box,pm); if(o.ax==='h') bx.scale.set(o.w,2.1,WT*2+.08); else bx.scale.set(WT*2+.08,2.1,o.w);
-    bx.position.set(o.x,1.05,o.y); bx.userData={t:'open',id:o.id}; W.add(bx); X.pick.push(bx);
+    const bx=new THREE.Mesh(X.box,pm); const oh=o.k==='gap'?WALL_H:2.1; if(o.ax==='h') bx.scale.set(o.w,oh,WT*2+.08); else bx.scale.set(WT*2+.08,oh,o.w);
+    bx.position.set(o.x,oh/2,o.y); bx.userData={t:'open',id:o.id}; W.add(bx); X.pick.push(bx);
     const a=o.ax==='h'?[1,0]:[0,1], n=o.ax==='h'?[0,1]:[1,0], s=o.flip?-1:1, hw=o.w/2;
     if(o.k.startsWith('door')){
       const leaves=o.k==='door2'?[[-hw,hw],[hw,hw]]:[[-hw,o.w]];
@@ -1150,8 +1160,8 @@ function buildStructure(){
         lf.position.set(o.x+a[0]*ua+n[0]*s*len/2,0,o.y+a[1]*ua+n[1]*s*len/2); lf.castShadow=lf.receiveShadow=true; lf.userData={t:'open',id:o.id};
         W.add(lf); addW(lf,0,2.05,n,true); }
     }
-    if(S.sel&&S.sel.id===o.id){ const bg=new THREE.BoxGeometry(o.ax==='h'?o.w+.06:WT*2+.12,2.16,o.ax==='h'?WT*2+.12:o.w+.06);
-      const l=new THREE.LineSegments(new THREE.EdgesGeometry(bg),new THREE.LineBasicMaterial({color:new THREE.Color(T.sel)})); bg.dispose(); l.position.set(o.x,1.08,o.y); l.userData.own=true; l.raycast=()=>{}; W.add(l); }
+    if(S.sel&&S.sel.id===o.id){ const bg=new THREE.BoxGeometry(o.ax==='h'?o.w+.06:WT*2+.12,oh+.06,o.ax==='h'?WT*2+.12:o.w+.06);
+      const l=new THREE.LineSegments(new THREE.EdgesGeometry(bg),new THREE.LineBasicMaterial({color:new THREE.Color(T.sel)})); bg.dispose(); l.position.set(o.x,oh/2+.03,o.y); l.userData.own=true; l.raycast=()=>{}; W.add(l); }
   }
   // grid overlay
   if(S.grid){
@@ -1322,13 +1332,13 @@ function preview3D(spec,cx,cy){
     else if(spec.type==='room'){ const R=ROOMS.find(q=>q.k===spec.k); g=new THREE.Group(); const m=new THREE.Mesh(X.plane,new THREE.MeshBasicMaterial({color:new THREE.Color(T.accent),transparent:true,opacity:.3,depthWrite:false}));
       m.rotation.x=-Math.PI/2; m.scale.set(R.w,R.d,1); m.userData.ownMat=true; g.add(m); X.prev={key,g,room:{w:R.w,d:R.d}}; }
     else { const O=OPENS[spec.k]; g=new THREE.Group(); const m=new THREE.Mesh(X.box,new THREE.MeshBasicMaterial({color:new THREE.Color(T.accent),transparent:true,opacity:.55}));
-      m.scale.set(O.w,2.1,WT*2+.06); m.userData.ownMat=true; g.add(m); X.prev={key,g,open:{k:spec.k,w:O.w}}; }
+      m.scale.set(O.w,spec.k==='gap'?WALL_H:2.1,WT*2+.06); m.userData.ownMat=true; g.add(m); X.prev={key,g,open:{k:spec.k,w:O.w}}; }
     X.overlay.add(g);
   }
   const P0=X.prev;
   if(P0.it){ P0.it.x=fp[0]; P0.it.y=fp[1]; snapItem(P0.it,1/60,false); P0.g.position.set(P0.it.x,.16,P0.it.y); updateFoot(); }
   else if(P0.room){ const rr={x:fp[0]-P0.room.w/2,y:fp[1]-P0.room.d/2,w:P0.room.w,d:P0.room.d}; snapRoom(rr,1/60,false); P0.g.position.set(rr.x+rr.w/2,.02,rr.y+rr.d/2); }
-  else { const o={k:P0.open.k,w:P0.open.w,x:fp[0],y:fp[1],ax:'h'}; placeOpening(o,fp[0],fp[1],false); P0.g.position.set(o.x,1.05,o.y); P0.g.rotation.y=o.ax==='h'?0:Math.PI/2; }
+  else { const o={k:P0.open.k,w:P0.open.w,x:fp[0],y:fp[1],ax:'h'}; placeOpening(o,fp[0],fp[1],false); P0.g.position.set(o.x,(o.k==='gap'?WALL_H:2.1)/2,o.y); P0.g.rotation.y=o.ax==='h'?0:Math.PI/2; }
   X.need=true; return fp;
 }
 function hidePreview(){ if(!X.ok||!X.prev) return; X.overlay.remove(X.prev.g); X.prev.g.traverse(o=>{ if(o.userData.ownMat) o.material.dispose(); }); X.prev=null; X.prevItem=null; updateFoot(); X.need=true; }
@@ -1503,11 +1513,11 @@ function renderInspector(){
       <div class="fld"><span>Colour</span>${finishUI(o,'iColor')}</div>
       <div class="actions"><button class="btn" type="button" id="iDup">Duplicate</button><button class="btn danger" type="button" id="iDel">Delete</button></div>`;
   } else {
-    h=`${close}<span class="eyebrow">${o.k.startsWith('door')?'Door':'Window'}</span><h2>${esc(OPENS[o.k].n)}</h2>
+    h=`${close}<span class="eyebrow">${o.k==='gap'?'Opening':o.k.startsWith('door')?'Door':'Window'}</span><h2>${esc(OPENS[o.k].n)}</h2>
       <label class="fld"><span>Type</span><select class="inp" id="iType">${Object.keys(OPENS).map(k=>`<option value="${k}" ${k===o.k?'selected':''}>${OPENS[k].n}</option>`).join('')}</select></label>
       <div class="dims two">${numField('iW','Width',o.w)}<div class="dim"><label>Wall</label><span class="alt" style="padding-top:8px">${o.ax==='h'?'Horizontal':'Vertical'}</span></div></div>
-      <div class="actions">${o.k.startsWith('door')?'<button class="btn" type="button" id="iFlip">Flip swing</button>':''}<button class="btn danger" type="button" id="iDel">Delete</button></div>
-      <p class="cat-intro" style="margin-top:14px">Drag it along any wall. It snaps to the nearest room edge and cuts the wall in 3D.</p>`;
+      <div class="actions">${o.k.startsWith('door')?'<button class="btn" type="button" id="iFlip">Flip swing</button>':''}${o.k==='gap'?'<button class="btn" type="button" id="iSpan">Whole wall</button>':''}<button class="btn danger" type="button" id="iDel">Delete</button></div>
+      <p class="cat-intro" style="margin-top:14px">${o.k==='gap'?'Removes that stretch of wall for an open-concept layout. Drag it along a wall, or use Whole wall to remove the entire wall. Delete puts the wall back.':'Drag it along any wall. It snaps to the nearest room edge and cuts the wall in 3D.'}</p>`;
   }
   insp.innerHTML=h;
   insp.querySelectorAll('canvas[data-floor]').forEach(paintFloorThumb);
@@ -1530,7 +1540,8 @@ function bindInspector(o){
     insp.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ o.c=b.dataset.c; commit(); });
     q('#iColor').onchange=e=>{ o.c=e.target.value; commit(); }; bindFinish(insp,o); }
   if(S.sel.t==='open'){ num('#iW',v=>{ o.w=Math.max(.4,v); placeOpening(o,o.x,o.y,true); }); q('#iType').onchange=e=>{ o.k=e.target.value; o.w=OPENS[o.k].w; placeOpening(o,o.x,o.y,true); commit(); };
-    q('#iFlip')&&(q('#iFlip').onclick=()=>{ o.flip=!o.flip; commit(); }); }
+    q('#iFlip')&&(q('#iFlip').onclick=()=>{ o.flip=!o.flip; commit(); });
+    q('#iSpan')&&(q('#iSpan').onclick=()=>{ const sp=wallSpan(o); if(sp){ o.w=sp.a1-sp.a0; placeOpening(o,(sp.a0+sp.a1)/2,sp.c,true); commit(); } else toast('Place it on a wall first'); }); }
 }
 function deleteSel(){ const s=S.sel; if(!s) return; const o=findSel(); if(X.carry){ X.carry=null; updateFoot(); }
   if(s.t==='room'){ const inside=i=>i.x>=o.x&&i.x<=o.x+o.w&&i.y>=o.y&&i.y<=o.y+o.d; const n=S.items.filter(inside).length; S.items=S.items.filter(i=>!inside(i)); S.rooms=S.rooms.filter(r=>r.id!==s.id); toast(`Deleted ${o.n}${n?` and ${n} item${n>1?'s':''} inside`:''}. Ctrl+Z to undo.`); }
