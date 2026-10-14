@@ -4,6 +4,8 @@
 
 **[Open Roomwright →](https://patrickdleduc.github.io/roomwright/)**
 
+![Roomwright demo: dragging an armchair, rotating the camera, and switching to split view](docs/demo.gif)
+
 Roomwright is a lightweight interior design modeling tool. It sits between graph paper and full CAD: you get a measured floor plan and a live 3D model that stay in sync, with editing that feels closer to *The Sims* than to an architecture suite. Click to pick something up, see if it fits, set it down.
 
 ---
