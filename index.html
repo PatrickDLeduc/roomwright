@@ -707,7 +707,7 @@ function drawPlan(g,W,H,v,opt){
     g.fillStyle=T.muted; g.font='400 10.5px "DM Mono", ui-monospace, monospace'; g.fillText(area,sx+13,sy+27); g.restore();
   }
   // selection overlay
-  if(opt.live) drawSelection(g,v);
+  if(opt.live){ drawSelection(g,v); drawHover(g,v); }
   if(opt.dims) S.rooms.forEach(r=>roomDims(g,v,r));
   // rulers
   if(opt.live) drawRulers(g,W,H,v);
@@ -805,6 +805,15 @@ function itemHandles(it,v){
   }
   return { rot: toWorld(it,0,-it.d/2-26/v.s), size };
 }
+function drawHover(g,v){
+  const h=P.hover; if(!h||X.carry) return;
+  const o=(h.t==='item'?S.items:S.opens).find(x=>x.id===h.id); if(!o) return;
+  let C;
+  if(h.t==='item') C=corners(o).map(p=>w2s(v,...p));
+  else { const hw=o.w/2, ht=Math.max(WT/2+.03,5/v.s), q=o.ax==='h'?[[-hw,-ht],[hw,-ht],[hw,ht],[-hw,ht]]:[[-ht,-hw],[ht,-hw],[ht,hw],[-ht,hw]];
+    C=q.map(([a,b])=>w2s(v,o.x+a,o.y+b)); }
+  g.save(); g.strokeStyle=T.accent; g.globalAlpha=.9; g.lineWidth=2; g.beginPath(); C.forEach((p,i)=>i?g.lineTo(...p):g.moveTo(...p)); g.closePath(); g.stroke(); g.restore();
+}
 function drawSelection(g,v){
   const o=findSel(); if(!o) return;
   if(S.sel.t==='room'){
@@ -849,11 +858,17 @@ function drawRulers(g,W,H,v){
 /* hit testing */
 function hitTest(wx,wy,v){
   const px=1/v.s;
+  // every piece gets at least a ~14px target, so lamps and plants stay clickable when zoomed out
+  const inItem=it=>{ const [lx,ly]=toLocal(it,wx,wy); return Math.abs(lx)<=it.w/2+Math.max(0,(14*px-it.w)/2) && Math.abs(ly)<=it.d/2+Math.max(0,(14*px-it.d)/2); };
+  // the selected piece always wins over a door/window it overlaps, so dragging furniture along a wall never grabs the door instead
+  const cur=S.sel&&S.sel.t==='item'?S.items.find(i=>i.id===S.sel.id):null;
+  if(cur&&!KINDS[cur.k].floor&&inItem(cur)) return {t:'item',o:cur};
+  // doors/windows: only the drawn wall band counts (no fat tolerance that spills onto furniture beside the wall)
   for(let i=S.opens.length-1;i>=0;i--){ const o=S.opens[i], along=o.ax==='h'?wx-o.x:wy-o.y, perp=o.ax==='h'?wy-o.y:wx-o.x;
-    if(Math.abs(along)<=o.w/2 && Math.abs(perp)<=Math.max(WT+.04,8*px)) return {t:'open',o}; }
+    if(Math.abs(along)<=o.w/2 && Math.abs(perp)<=Math.max(WT/2+.02,6*px)) return {t:'open',o}; }
   const items=[...S.items].sort((a,b)=>(KINDS[b.k].floor?1:0)-(KINDS[a.k].floor?1:0));
-  for(let i=items.length-1;i>=0;i--){ if(KINDS[items[i].k].floor) continue; const [lx,ly]=toLocal(items[i],wx,wy); if(Math.abs(lx)<=items[i].w/2&&Math.abs(ly)<=items[i].d/2) return {t:'item',o:items[i]}; }
-  for(let i=items.length-1;i>=0;i--){ if(!KINDS[items[i].k].floor) continue; const [lx,ly]=toLocal(items[i],wx,wy); if(Math.abs(lx)<=items[i].w/2&&Math.abs(ly)<=items[i].d/2) return {t:'item',o:items[i]}; }
+  for(let i=items.length-1;i>=0;i--){ if(KINDS[items[i].k].floor) continue; if(inItem(items[i])) return {t:'item',o:items[i]}; }
+  for(let i=items.length-1;i>=0;i--){ if(!KINDS[items[i].k].floor) continue; if(inItem(items[i])) return {t:'item',o:items[i]}; }
   const r=roomAt(wx,wy); if(r) return {t:'room',o:r};
   return null;
 }
@@ -886,7 +901,10 @@ P.cv.addEventListener('pointerdown',e=>{
     else if(hh.startsWith('size:')){ const [,hx,hy]=hh.split(':').map(Number); drag={mode:'size',o,st:beginItemResize(o,hx,hy,wx,wy)}; }
     else drag={mode:'edge',o,side:hh.slice(5)};
     return; }
-  const hit=hitTest(wx,wy,v);
+  const hit=hitTest(wx,wy,v); P.hover=null;
+  // an unselected room only selects on a click; dragging over it pans, so you can't shove a whole room (and its furniture) by accident
+  // (same for doors/windows: the first click selects, a drag only moves one that is already selected, matching the 3D view)
+  if(hit&&(hit.t==='room'||hit.t==='open')&&!(S.sel&&S.sel.id===hit.o.id)){ drag={mode:'pan',sx,sy,vx:v.x,vy:v.y,moved:false,pick:{t:hit.t,id:hit.o.id}}; return; }
   if(hit){
     select(hit.t,hit.o.id);
     const rc = hit.t==='room' ? roomContents(hit.o) : {kids:null,ops:null};
@@ -899,7 +917,9 @@ P.cv.addEventListener('pointermove',e=>{
   if(ptrs.has(e.pointerId)) ptrs.set(e.pointerId,[sx,sy]);
   if(!drag){ const hh=handleHit(sx,sy,v), hit=hh?null:hitTest(wx,wy,v);
     const sz=hh&&hh.startsWith('size:')?hh.split(':').map(Number):null;
-    P.cv.style.cursor = hh==='rot'?'crosshair': sz?resizeCursor(findSel(),sz[1],sz[2]): hh&&(hh.endsWith('-l')||hh.endsWith('-r'))?'ew-resize': hh?'ns-resize': hit?'move':'grab'; req2D(); return; }
+    const pickOnly=hit&&(hit.t==='room'||hit.t==='open')&&!(S.sel&&S.sel.id===hit.o.id);   // click selects; drag pans
+    P.hover=hit&&hit.t!=='room'&&!(S.sel&&S.sel.id===hit.o.id)?{t:hit.t,id:hit.o.id}:null;
+    P.cv.style.cursor = hh==='rot'?'crosshair': sz?resizeCursor(findSel(),sz[1],sz[2]): hh&&(hh.endsWith('-l')||hh.endsWith('-r'))?'ew-resize': hh?'ns-resize': hit?(pickOnly?'pointer':'move'):'grab'; req2D(); return; }
   const free=e.altKey, px=1/v.s;
   switch(drag.mode){
     case 'pinch': { if(ptrs.size<2) return; const [a,b]=[...ptrs.values()], d=Math.hypot(a[0]-b[0],a[1]-b[1]), m=[(a[0]+b[0])/2,(a[1]+b[1])/2];
@@ -921,11 +941,12 @@ function endPtr(e){
   if(!drag) return;
   if(drag.mode==='pinch'){ if(ptrs.size===0) drag=null; return; }
   if(drag.mode==='pan' && drag.clear && !drag.moved) select(null);
+  if(drag.mode==='pan' && drag.pick && !drag.moved) select(drag.pick.t,drag.pick.id);
   if(drag.mode!=='pan') commit();
   drag=null; req2D();
 }
 P.cv.addEventListener('pointerup',endPtr); P.cv.addEventListener('pointercancel',endPtr);
-P.cv.addEventListener('pointerleave',()=>{ if(!drag){ P.cursor=null; req2D(); } });
+P.cv.addEventListener('pointerleave',()=>{ if(!drag){ P.cursor=null; P.hover=null; req2D(); } });
 P.cv.addEventListener('contextmenu',e=>e.preventDefault());
 P.cv.addEventListener('wheel',e=>{ e.preventDefault(); const [sx,sy]=evPos(e,P.cv); zoomAt(sx,sy,Math.exp(-e.deltaY*0.0015)); },{passive:false});
 function zoomAt(sx,sy,f){ const v=P.v, s=Math.max(12,Math.min(400,v.s*f)), wx=(sx-v.x)/v.s, wy=(sy-v.y)/v.s; v.s=s; v.x=sx-wx*s; v.y=sy-wy*s; req2D(); }
@@ -975,6 +996,9 @@ function init3D(){
     const g=new THREE.Group(); g.userData={t:'ihandle',hx,hy};
     const d=new THREE.Mesh(disc,X.handleM), c=new THREE.Mesh(cone,X.handleM); c.rotation.z=-Math.PI/2; c.position.set(.36,.02,0);
     d.renderOrder=c.renderOrder=7; g.add(d,c); g.scale.setScalar(hx&&hy?.4:.5); X.ihandles.add(g); X.ihmap.push(g); }
+  // hover outline for doors/windows/open walls (items have their own edge highlight)
+  X.hoverOpenL=new THREE.LineSegments(new THREE.EdgesGeometry(X.box),new THREE.LineBasicMaterial({color:0xc47d14,transparent:true,opacity:.95,depthTest:false}));
+  X.hoverOpenL.renderOrder=8; X.hoverOpenL.visible=false; X.hoverOpenL.raycast=()=>{}; X.overlay.add(X.hoverOpenL);
   bind3D(); bindMini(); requestAnimationFrame(tick);
 }
 function resize3D(){ if(!X.ok) return; const r=$('#v3d').getBoundingClientRect(); if(r.width<2||r.height<2) return; X.renderer.setSize(r.width,r.height,false); X.renderer.domElement.style.width='100%'; X.renderer.domElement.style.height='100%'; X.cam.aspect=r.width/r.height; X.cam.updateProjectionMatrix(); X.need=true; }
@@ -1107,9 +1131,9 @@ function wallPieces(r){
     ? (Math.abs(o.y-e.line)<tol||Math.abs(o.y+o.d-e.line)<tol)&&Math.min(b,o.x+o.w)-Math.max(a,o.x)>.05
     : (Math.abs(o.x-e.line)<tol||Math.abs(o.x+o.w-e.line)<tol)&&Math.min(b,o.y+o.d)-Math.max(a,o.y)>.05));
   for(const e of edges){
-    const gaps=S.opens.filter(o=>o.ax===e.ax && Math.abs((e.ax==='h'?o.y:o.x)-e.line)<tol).map(o=>{ const u=e.ax==='h'?o.x:o.y; return {k:o.k,a:Math.max(e.a0,u-o.w/2),b:Math.min(e.a1,u+o.w/2)}; }).filter(q=>q.b>q.a).sort((p,q)=>p.a-q.a);
+    const gaps=S.opens.filter(o=>o.ax===e.ax && Math.abs((e.ax==='h'?o.y:o.x)-e.line)<tol).map(o=>{ const u=e.ax==='h'?o.x:o.y; return {id:o.id,k:o.k,a:Math.max(e.a0,u-o.w/2),b:Math.min(e.a1,u+o.w/2)}; }).filter(q=>q.b>q.a).sort((p,q)=>p.a-q.a);
     let cur=e.a0;
-    for(const q of gaps){ if(q.a>cur) pieces.push({e,a:cur,b:q.a,type:'solid'}); pieces.push({e,a:Math.max(cur,q.a),b:q.b,type:q.k==='gap'?'gap':q.k.startsWith('door')?'door':'window'}); cur=Math.max(cur,q.b); }
+    for(const q of gaps){ if(q.a>cur) pieces.push({e,a:cur,b:q.a,type:'solid'}); pieces.push({e,a:Math.max(cur,q.a),b:q.b,id:q.id,type:q.k==='gap'?'gap':q.k.startsWith('door')?'door':'window'}); cur=Math.max(cur,q.b); }
     if(cur<e.a1) pieces.push({e,a:cur,b:e.a1,type:'solid'});
   }
   pieces.forEach(p=>{ const m=(p.a+p.b)/2, off=.2, px=p.e.ax==='h'?m:p.e.line+p.e.n[0]*off, py=p.e.ax==='h'?p.e.line+p.e.n[1]*off:m;
@@ -1136,22 +1160,26 @@ function buildStructure(){
   const wallM=mat('#ebe9e3'), capM=mat('#3a4044'), mats=[wallM,wallM,capM,wallM,wallM,wallM];
   const glass=mat('#b9d6e0',{transparent:true,opacity:.3,roughness:.05}), frame=mat('#f4f3ef');
   const addW=(me,y0,y1,n,shared)=>{ const w={m:me,y0,y1,n,shared,cut:0}; w.cut=wallWant(w); applyWall(w); X.walls.push(w); };
-  const seg=(p,y0,y1,m)=>{ const e=p.e, len=p.b-p.a, mid=(p.a+p.b)/2; if(len<.005||y1-y0<.005) return null;
+  // `ud` lets a piece carry its opening's id, so only *visible* parts of a door/window (glass, frame, leaf, threshold) are click targets
+  const seg=(p,y0,y1,m,ud)=>{ const e=p.e, len=p.b-p.a, mid=(p.a+p.b)/2; if(len<.005||y1-y0<.005) return null;
     const me=new THREE.Mesh(X.box,m||mats);
     if(e.ax==='h'){ me.scale.set(len,1,WT); me.position.set(mid,0,e.c); } else { me.scale.set(WT,1,len); me.position.set(e.c,0,mid); }
-    me.castShadow=m!==glass; me.receiveShadow=true; me.userData={t:'wall'}; W.add(me); addW(me,y0,y1,e.n,p.shared); return me; };
+    me.castShadow=m!==glass; me.receiveShadow=true; me.userData=ud||{t:'wall'}; W.add(me); addW(me,y0,y1,e.n,p.shared); return me; };
   for(const r of S.rooms) for(const p of wallPieces(r)){
     if(p.type==='solid') seg(p,0,WALL_H);
     else if(p.type==='gap'){ /* wall removed */ }
     else if(p.type==='door') seg(p,2.1,WALL_H);
-    else { seg(p,0,.9); seg(p,2.1,WALL_H); const gm=seg(p,.9,2.1,glass); if(gm){ if(p.e.ax==='h') gm.scale.z=.02; else gm.scale.x=.02; } seg(p,.88,.92,frame); }
+    else { const ud={t:'open',id:p.id}; seg(p,0,.9); seg(p,2.1,WALL_H); const gm=seg(p,.9,2.1,glass,ud); if(gm){ if(p.e.ax==='h') gm.scale.z=.02; else gm.scale.x=.02; } seg(p,.88,.92,frame,ud); }
   }
-  // openings: invisible pick boxes, door leaves, selection outline
-  const pm=X.pickM||(X.pickM=new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false,colorWrite:false}));
-  const leafM=mat('#c9a77c');
+  // openings: door leaves, a visible threshold strip on the floor (doors and open walls), selection outline.
+  // There are deliberately no invisible pick boxes: an invisible target is a click you can't see coming.
+  const leafM=mat('#c9a77c'), stripOpt={polygonOffset:true,polygonOffsetFactor:-3,polygonOffsetUnits:-3,roughness:.9};
   for(const o of S.opens){
-    const bx=new THREE.Mesh(X.box,pm); const oh=o.k==='gap'?WALL_H:2.1; if(o.ax==='h') bx.scale.set(o.w,oh,WT*2+.08); else bx.scale.set(WT*2+.08,oh,o.w);
-    bx.position.set(o.x,oh/2,o.y); bx.userData={t:'open',id:o.id}; W.add(bx); X.pick.push(bx);
+    const y0=o.k.startsWith('window')?.88:0, oh=o.k==='gap'?WALL_H:2.1;
+    if(o.k==='gap'||o.k.startsWith('door')){
+      const st=new THREE.Mesh(X.plane,mat(o.k==='gap'?'#d9d5c9':'#a98a62',stripOpt)), th=WT+.1;
+      st.rotation.x=-Math.PI/2; if(o.ax==='h') st.scale.set(o.w,th,1); else st.scale.set(th,o.w,1);
+      st.position.set(o.x,.006,o.y); st.renderOrder=2; st.receiveShadow=true; st.userData={t:'open',id:o.id}; W.add(st); X.pick.push(st); }
     const a=o.ax==='h'?[1,0]:[0,1], n=o.ax==='h'?[0,1]:[1,0], s=o.flip?-1:1, hw=o.w/2;
     if(o.k.startsWith('door')){
       const leaves=o.k==='door2'?[[-hw,hw],[hw,hw]]:[[-hw,o.w]];
@@ -1160,9 +1188,10 @@ function buildStructure(){
         lf.position.set(o.x+a[0]*ua+n[0]*s*len/2,0,o.y+a[1]*ua+n[1]*s*len/2); lf.castShadow=lf.receiveShadow=true; lf.userData={t:'open',id:o.id};
         W.add(lf); addW(lf,0,2.05,n,true); }
     }
-    if(S.sel&&S.sel.id===o.id){ const bg=new THREE.BoxGeometry(o.ax==='h'?o.w+.06:WT*2+.12,oh+.06,o.ax==='h'?WT*2+.12:o.w+.06);
-      const l=new THREE.LineSegments(new THREE.EdgesGeometry(bg),new THREE.LineBasicMaterial({color:new THREE.Color(T.sel)})); bg.dispose(); l.position.set(o.x,oh/2+.03,o.y); l.userData.own=true; l.raycast=()=>{}; W.add(l); }
+    if(S.sel&&S.sel.id===o.id){ const bg=new THREE.BoxGeometry(o.ax==='h'?o.w+.06:WT*2+.12,oh-y0+.06,o.ax==='h'?WT*2+.12:o.w+.06);
+      const l=new THREE.LineSegments(new THREE.EdgesGeometry(bg),new THREE.LineBasicMaterial({color:new THREE.Color(T.sel)})); bg.dispose(); l.position.set(o.x,(y0+oh)/2+.03,o.y); l.userData.own=true; l.raycast=()=>{}; W.add(l); }
   }
+  setHoverOpen(null);
   // grid overlay
   if(S.grid){
     const um=S.unit==='ft'?1/M2FT:1, minor=(S.unit==='ft'?1:.5)*um, ratio=S.unit==='ft'?5:2, pad=1.5;
@@ -1188,21 +1217,62 @@ function itemOverlaps(it){ if(KINDS[it.k].floor) return []; return S.items.filte
 function setRay(cx,cy){ const r=X.renderer.domElement.getBoundingClientRect(); X.ray.setFromCamera(new THREE.Vector2((cx-r.left)/r.width*2-1,-((cy-r.top)/r.height)*2+1),X.cam); }
 function floorPoint(cx,cy){ setRay(cx,cy); const p=new THREE.Vector3(); return X.ray.ray.intersectPlane(X.floorPlane,p)? [p.x,p.z] : null; }
 function planePoint(cx,cy,h){ setRay(cx,cy); const p=new THREE.Vector3(); return X.ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-h),p)? [p.x,p.z] : null; }
+const PICK_HANDLE_PX=12, PICK_ITEM_PX=8;
+// distance (px) from a point to the convex hull of a set of screen points; 0 when inside
+function hullDist(pts,mx,my){
+  const Q=[...pts].sort((a,b)=>a[0]-b[0]||a[1]-b[1]), cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]), lo=[], up=[];
+  for(const p of Q){ while(lo.length>1&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0) lo.pop(); lo.push(p); }
+  for(const p of [...Q].reverse()){ while(up.length>1&&cr(up[up.length-2],up[up.length-1],p)<=0) up.pop(); up.push(p); }
+  const H=lo.slice(0,-1).concat(up.slice(0,-1)); if(H.length<3) return Infinity;
+  let inside=true, best=Infinity;
+  for(let i=0;i<H.length;i++){ const a=H[i], b=H[(i+1)%H.length];
+    if(cr(a,b,[mx,my])<0) inside=false;
+    const dx=b[0]-a[0], dy=b[1]-a[1], L=dx*dx+dy*dy, t=L?Math.max(0,Math.min(1,((mx-a[0])*dx+(my-a[1])*dy)/L)):0;
+    best=Math.min(best,Math.hypot(mx-(a[0]+t*dx),my-(a[1]+t*dy))); }
+  return inside?0:best;
+}
+// nearest standing piece whose on-screen silhouette is within `maxPx` of the pointer: makes small or thin furniture forgiving to click
+function nearItem(mx,my,r,maxPx){
+  const v=new THREE.Vector3(); let best=null, bd=maxPx+1e-6;
+  for(const it of S.items){ if(KINDS[it.k].floor) continue;
+    const pts=[]; let ok=true;
+    for(const [wx,wz] of corners(it)) for(const y of [0,Math.max(it.h,.05)]){ v.set(wx,y,wz).project(X.cam); if(v.z>1||v.z<-1){ ok=false; break; } pts.push([(v.x+1)/2*r.width,(1-v.y)/2*r.height]); }
+    if(!ok) continue;
+    const d=hullDist(pts,mx,my); if(d<bd){ bd=d; best=it; } }
+  return best;
+}
 function pick3D(cx,cy){
   setRay(cx,cy);
+  const r=X.renderer.domElement.getBoundingClientRect(), mx=cx-r.left, my=cy-r.top;
+  // resize handles: screen-space proximity (they stay grabbable when zoomed out)
   const hs=[...(X.handles.visible?X.handles.children:[]), ...(X.ihandles.visible?X.ihandles.children.filter(g=>g.visible):[])];
-  if(hs.length){ const hh=X.ray.intersectObjects(hs,true); if(hh.length){ let o=hh[0].object; while(o&&!o.userData.t) o=o.parent; if(o) return o.userData; } }
-  const occ=X.walls.filter(w=>w.m.visible).map(w=>w.m);
-  const hits=X.ray.intersectObjects([...X.itemsG.children,...X.pick,...occ],true);
-  for(const h of hits){ let o=h.object; while(o&&!o.userData.t) o=o.parent; if(!o) continue; if(o.userData.t==='wall') return null; return o.userData; }
-  return null;
+  if(hs.length){ X.root.updateMatrixWorld(true); const v=new THREE.Vector3(); let best=null, bd=PICK_HANDLE_PX;
+    for(const g of hs){ g.getWorldPosition(v); v.project(X.cam); if(v.z>1||v.z<-1) continue;
+      const d=Math.hypot((v.x+1)/2*r.width-mx,(1-v.y)/2*r.height-my)-(g.userData.hx&&g.userData.hy?1.5:0); if(d<bd){ bd=d; best=g; } }
+    if(best) return best.userData; }
+  const occ=X.walls.filter(w=>w.m.visible).map(w=>w.m), floors=X.pick.filter(o=>o.visible!==false);
+  const hits=X.ray.intersectObjects([...X.itemsG.children,...floors,...occ],true);
+  let first=null;
+  for(const h of hits){ let o=h.object; while(o&&!o.userData.t) o=o.parent; if(!o) continue; if(o.userData.t==='wall') return null; first=o.userData; break; }
+  if(first&&(first.t==='item'||first.t==='open')) return first;
+  // near miss: a piece whose silhouette is within a few px beats the floor behind it
+  const near=nearItem(mx,my,r,PICK_ITEM_PX); if(near) return {t:'item',id:near.id};
+  return first;
 }
 function setHover(id){ if(X.hover===id) return; const old=X.hover; X.hover=id;
   for(const k of [old,id]){ if(!k) continue; const e=X.itemG.get(k), it=S.items.find(i=>i.id===k); if(e&&it) setFlags(e.g,it); } X.need=true; }
+/* outline the door/window/open wall under the pointer so a click is never a surprise */
+function setHoverOpen(id){ const L=X.hoverOpenL; if(!L) return; X.hoverOpen=id||null;
+  const o=id&&S.opens.find(i=>i.id===id);
+  if(!o){ if(L.visible){ L.visible=false; X.need=true; } return; }
+  const y0=o.k.startsWith('window')?.88:0, oh=o.k==='gap'?WALL_H:2.1;
+  if(o.ax==='h') L.scale.set(o.w+.06,oh-y0+.06,WT*2+.12); else L.scale.set(WT*2+.12,oh-y0+.06,o.w+.06);
+  L.position.set(o.x,(y0+oh)/2+.03,o.y); L.material.color.set(T.accent); L.visible=true; X.need=true; }
 function hover3D(cx,cy){
   if(X.carry) return; const h=pick3D(cx,cy); setHover(h&&h.t==='item'?h.id:null);
+  setHoverOpen(h&&h.t==='open'&&!(S.sel&&S.sel.id===h.id)?h.id:null);
   const el=X.renderer.domElement;
-  el.style.cursor=!h?'': (h.t==='handle'||h.t==='ihandle')?'grab' : (h.t==='item'||h.t==='open')?'grab' : (h.t==='room'&&S.sel&&S.sel.id===h.id)?'move':'pointer';
+  el.style.cursor=!h?'': (h.t==='handle'||h.t==='ihandle')?'grab' : h.t==='item'?'grab' : h.t==='open'?((S.sel&&S.sel.id===h.id)?'grab':'pointer') : (h.t==='room'&&S.sel&&S.sel.id===h.id)?'move':'pointer';
   const fp=floorPoint(cx,cy); if(fp) $('#stPos').textContent=`x ${fmtLen(fp[0])}   y ${fmtLen(fp[1])}`;
 }
 
@@ -1211,7 +1281,7 @@ function startCarry(it,mode,opt={}){
   if(X.carry) dropCarry();
   if(!S.sel||S.sel.id!==it.id) select('item',it.id);
   X.carry={it,mode,isNew:!!opt.isNew,orig:{x:it.x,y:it.y,rot:it.rot},ox:opt.ox||0,oy:opt.oy||0};
-  setHover(null); closeAbarPop(); req3D(); const e=X.itemG.get(it.id); if(e) setFlags(e.g,it);
+  setHover(null); setHoverOpen(null); closeAbarPop(); req3D(); const e=X.itemG.get(it.id); if(e) setFlags(e.g,it);
   updateFoot(); abarText(); updateStatus(); X.need=true;
 }
 function moveCarry(e){ const c=X.carry; if(!c) return; const fp=floorPoint(e.clientX,e.clientY); if(!fp) return;
@@ -1240,7 +1310,7 @@ function bind3D(){
   el.addEventListener('contextmenu',e=>e.preventDefault());
   el.addEventListener('pointerdown',e=>{
     try{ el.setPointerCapture(e.pointerId); }catch(_){}
-    p3.set(e.pointerId,[e.clientX,e.clientY]); closeAbarPop();
+    p3.set(e.pointerId,[e.clientX,e.clientY]); closeAbarPop(); setHoverOpen(null);
     if(X.carry&&X.carry.mode==='held'){
       if(e.button===2){ rotCarry(90); return; }
       moveCarry(e); if(e.pointerType==='mouse'){ dropCarry(); return; }
@@ -1286,7 +1356,7 @@ function bind3D(){
     if(d.mode==='orbit'&&!d.moved){ if(d.hit&&d.hit.t==='room') select('room',d.hit.id); else if(d.hit&&d.hit.t==='open') select('open',d.hit.id); else select(null); }
   };
   el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up);
-  el.addEventListener('pointerleave',()=>{ if(!d3) setHover(null); });
+  el.addEventListener('pointerleave',()=>{ if(!d3){ setHover(null); setHoverOpen(null); } });
   el.addEventListener('dblclick',e=>{ if(X.carry) return; const h=pick3D(e.clientX,e.clientY); if(!h) return;
     if(h.t==='item'){ const it=S.items.find(i=>i.id===h.id); if(it){ startCarry(it,'held'); toast('Picked up · click to place · Esc puts it back'); } }
     else if(h.t==='room'){ select('room',h.id); focusSel(); } });
